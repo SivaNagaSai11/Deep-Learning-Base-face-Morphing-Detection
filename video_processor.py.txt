@@ -1,0 +1,56 @@
+import os
+import cv2
+import tempfile
+import numpy as np
+
+class VideoProcessor:
+    def _init_(self, num_frames=100):
+        self.num_frames = num_frames
+
+    def save_uploaded_video(self, uploaded_file):
+        temp_path = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4').name
+        with open(temp_path, 'wb') as f:
+            f.write(uploaded_file.read())
+        return temp_path
+
+    def extract_frames(self, video_path):
+        cap = cv2.VideoCapture(video_path)
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        interval = max(1, total_frames // self.num_frames)
+        frames = []
+        for i in range(self.num_frames):
+            cap.set(cv2.CAP_PROP_POS_FRAMES, i * interval)
+            ret, frame = cap.read()
+            if ret:
+                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                frames.append(frame_rgb)
+        cap.release()
+        return frames
+
+    def process_video(self, video_path, extract_face_fn, process_image_fn, models, progress_callbacks=None):
+        frames = self.extract_frames(video_path)
+        results = []
+        faces = []
+
+        for frame in frames:
+            image_pil = Image.fromarray(frame)
+            face_img, _ = extract_face_fn(image_pil)
+            if face_img is None:
+                continue
+            faces.append(face_img)
+            for model_data in models:
+                model = model_data['model']
+                model_type = model_data['model_type']
+                processed = process_image_fn(face_img, model_type)
+                with torch.no_grad():
+                    output = model(processed)
+                    prob = torch.sigmoid(output).item()
+                    label = "FAKE" if prob > 0.5 else "REAL"
+                    conf = prob if label == "FAKE" else 1 - prob
+                    results.append({
+                        "model_type": model_type,
+                        "prediction": label,
+                        "confidence": conf
+                    })
+
+        return results, faces
